@@ -180,12 +180,18 @@ def is_suitable_tempdir(path):
 
 
 
+def not_implemented(token):
+    msg = "This argument is not currently supported."
+    raise argparse.ArgumentTypeError(msg)
+
+
+
 def pp_args(args):
     print("Running with the following arguments:")
     print()
     for arg in args:
         argNamePadded = "{:<18}".format(arg)
-        if arg in ['aws-access-secret', 'humio-token']:
+        if arg in ['aws_access_secret', 'humio-token']:
             print("\t%s =>\t%s"% (argNamePadded, str("*" * len(str(args[arg])))))
         else:
             print("\t%s =>\t%s"% (argNamePadded, str(args[arg])))
@@ -201,10 +207,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='This script is used to coordinate log ingest from S3 where those logs have arrived via an AWS kinesis stream.')
 
     # Details for the source bucket and access
-    parser.add_argument('bucket',            type=str, action='store', help='The S3 bucket from which to export. E.g "demo.humio.xyz"')
-    parser.add_argument('--prefix',          type=str, action='store', default="", help='The S3 prefix from which to search. E.g "awslogs/2020/04/01/"')
-    parser.add_argument('aws-access-id',     type=str, action='store', help='The AWS access key ID')
-    parser.add_argument('aws-access-secret', type=str, action='store', help='The AWS access key secret')
+    parser.add_argument('bucket',              type=str, action='store', help='The S3 bucket from which to export. E.g "demo.humio.xyz"')
+    parser.add_argument('--prefix',            type=str, action='store', default="", help='The S3 prefix from which to search. E.g "awslogs/2020/04/01/"')
+    parser.add_argument('--aws-access-id',     type=not_implemented, action='store', help='The AWS access key ID (not implemented)')
+    parser.add_argument('--aws-access-secret', type=not_implemented, action='store', help='The AWS access key secret (not implemented)')
 
     # Target system where the logs will be sent
     parser.add_argument('humio-host',        type=str, action='store', default="https://cloud.humio.com/", help='The URL to the target Humio instance, including port number')

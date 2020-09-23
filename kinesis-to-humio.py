@@ -7,9 +7,9 @@ import os
 import json
 import shutil
 import urllib.parse
+import sqlite3
 import urllib3
 import boto3
-
 
 # Bytes string that identifies the start of the array
 ARRAY_START = b"{\"messageType\":\"DATA_MESSAGE\""
@@ -45,9 +45,38 @@ def is_compressed(filename):
 
 
 
+def initalise_connection(db_file):
+    """ create a database connection to the SQLite database
+        specified by the db_file """
+    conn = None
+    try:
+        conn = sqlite3.connect(db_file)
+        c = conn.cursor()
+        c.execute("""CREATE TABLE IF NOT EXISTS files (
+                         bucket text NOT NULL,
+                         filepath text NOT NULL); """)
+    except sqlite3.Error as e:
+        print(e)
+    return conn
+
+
+
+def track_file(conn, bucket, filepath):
+    """update priority, begin_date, and end date of a task"""
+    cur = conn.cursor()
+    cur.execute("INSERT INTO files VALUES (?,?)", (bucket, filepath))
+    conn.commit()
+
+
+
 def parse_and_send(args, file, http, client):
     """For the file given we will extract the relevent events, parse them, and
     send them to Humio."""
+
+    # As we process the files, if tracking is requested, we need to register them as done
+    if args['track']:
+        conn = initalise_connection(args['track'])
+
 
     # We're going to process each file in a dedicated temp directory
     with tempfile.TemporaryDirectory(dir=args['tmpdir']) as tmpdirname:
@@ -139,6 +168,13 @@ def parse_and_send(args, file, http, client):
                 else:
                     log("Sent %d events from file %s"% (len(json_data['logEvents']), file), level="INFO")
 
+        # We have processed a whole file, if tracking is requested we need to register it
+        if args['track']:
+            track_file(conn, args['bucket'], file)
+
+    if args['track']:
+        conn.close()
+
 
 
 def find_files(args, client):
@@ -167,6 +203,16 @@ def find_files(args, client):
 
     # What did we get?
     log("Found %d items"% len(objects))
+
+    # If we have a tracking database argument we need to dedupe the list against already
+    # processed files
+    if args['track']:
+        conn = initalise_connection(args['track'])
+        for filepath in conn.execute('''SELECT filepath FROM files WHERE bucket=? AND filepath LIKE ?''', (args['bucket'], args['prefix'] + '%') ):
+            if filepath[0] in objects:
+                objects.remove(filepath[0])
+                if args['debug']: log("Excluding already processed file %s"% filepath[0], level="DEBUG")
+        conn.close()
 
     return objects
 
@@ -220,6 +266,7 @@ if __name__ == "__main__":
     # Are we going to do the debug?
     parser.add_argument('--debug',           action='store_true', help='We do the debug?')
     parser.add_argument('--tmpdir',          type=is_suitable_tempdir, action='store', default="/tmp", help='The temp directory where the work will be done')
+    parser.add_argument('--track',           type=str, action='store', help='A path for a sqlite database for tracking files successfully processed')
 
     # Build the argument list
     args = vars(parser.parse_args())

@@ -7,9 +7,8 @@ This data shipper is designed to connect to an AWS S3 bucket, fetch the contents
 
  ## Usage
 
-    usage: kinesis-to-humio.py [-h] [--prefix PREFIX] [--aws-access-id AWS_ACCESS_ID] [--aws-access-secret AWS_ACCESS_SECRET]
-                               [--humio-batch HUMIO_BATCH] [--debug] [--tmpdir TMPDIR]
-                               bucket humio-host humio-token
+    % python3 kinesis-to-humio.py --help
+    usage: kinesis-to-humio.py [-h] [--prefix PREFIX] [--aws-access-id AWS_ACCESS_ID] [--aws-access-secret AWS_ACCESS_SECRET] [--humio-batch HUMIO_BATCH] [--debug] [--tmpdir TMPDIR] [--track TRACK] bucket humio-host humio-token
 
     This script is used to coordinate log ingest from S3 where those logs have arrived via an AWS kinesis stream.
 
@@ -29,3 +28,4 @@ This data shipper is designed to connect to an AWS S3 bucket, fetch the contents
                             max event batch size for Humio API
       --debug               We do the debug?
       --tmpdir TMPDIR       The temp directory where the work will be done
+      --track TRACK         A path for a sqlite database for tracking files successfully processed

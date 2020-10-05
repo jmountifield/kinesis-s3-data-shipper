@@ -8,6 +8,8 @@ import json
 import shutil
 import urllib.parse
 import sqlite3
+import fnmatch
+import re
 import urllib3
 import boto3
 
@@ -155,20 +157,28 @@ def send_events_to_humio(args, events, file, http):
 
 def find_files(args, client):
     """ Get a list of all the objects to process"""
+
+    # Lets see if we have a prefix with wildcards. We can't use them when we get the file list from
+    # AWS but we can post-process the file list to make sure they match
+    if args['prefix']:
+        prefix = re.match("^([^\*\?]+)", args['prefix']).group()
+    else:
+        prefix = ""
+
     objects = []
     continuation_token = 'UNSET'
     while continuation_token:
         if continuation_token == 'UNSET':
-            object_list = client.list_objects_v2(Bucket=args['bucket'],Prefix=args['prefix'])
+            object_list = client.list_objects_v2(Bucket=args['bucket'],Prefix=prefix)
         else:
-            object_list = client.list_objects_v2(Bucket=args['bucket'], Prefix=args['prefix'], ContinuationToken=continuation_token)
+            object_list = client.list_objects_v2(Bucket=args['bucket'], Prefix=prefix, ContinuationToken=continuation_token)
 
         if args['debug']: log("Found %d items from bucket list_objects_v2(), includes dirs."% object_list['KeyCount'], level="DEBUG")
 
         # This means we have no more keys, or none found
         if object_list['KeyCount'] > 0:
             for item in object_list['Contents']:
-                if not item['Key'].endswith('/'): # ignore directories
+                if not item['Key'].endswith('/') and fnmatch.fnmatch(item['Key'], args['prefix'] + '*'): # ignore directories
                     objects.append(item['Key'])
 
         # And here we check to see if there's more results to recover
@@ -184,7 +194,7 @@ def find_files(args, client):
     # processed files
     if args['track']:
         conn = initalise_connection(args['track'])
-        for filepath in conn.execute('''SELECT filepath FROM files WHERE bucket=? AND filepath LIKE ?''', (args['bucket'], args['prefix'] + '%') ):
+        for filepath in conn.execute('''SELECT filepath FROM files WHERE bucket=? AND filepath LIKE ?''', (args['bucket'], prefix + '%') ):
             if filepath[0] in objects:
                 objects.remove(filepath[0])
                 if args['debug']: log("Excluding already processed file %s"% filepath[0], level="DEBUG")

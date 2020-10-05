@@ -2,7 +2,7 @@ import sys
 import datetime
 import tempfile
 import gzip
-import mmap
+import subprocess
 import os
 import json
 import shutil
@@ -10,10 +10,6 @@ import urllib.parse
 import sqlite3
 import urllib3
 import boto3
-
-# Bytes string that identifies the start of the array
-ARRAY_START = b"{\"messageType\":\"DATA_MESSAGE\""
-
 
 
 def humio_url(args):
@@ -95,78 +91,31 @@ def parse_and_send(args, file, http, client):
             # Move the new file over the top of the original
             shutil.move(file_path + ".working", file_path)
 
-        # Open the new uncompressed version of the download and mmap it (it could be big!)
-        with open(file_path) as cw_events_fh:
-            cw_events_mm = mmap.mmap(cw_events_fh.fileno(), 0, prot=mmap.PROT_READ)
+        # Rewite the cloudtrail file to convert the records[] array to NDJSON
+        with open(file_path + ".working", 'wb') as f_out:
+            subprocess.run(["jq -c \".Records | .[]\" %s"% file_path],
+                           shell=True, check=True, stdout=f_out)
+        # Moving the working file back in place
+        shutil.move(file_path + ".working", file_path)
 
-            # Start searching at the beginning of the file
-            start_search = 0
-            message_positions = []
+        # Open the new uncompressed and reformatted file for line-by-line processing
+        with open(file_path) as ct_events_fh:
 
-            # Search through the file looking for the message blocks
-            while start_search != -1:
-                start_search = cw_events_mm.find(ARRAY_START, start_search)
-                # If we found another message block then record it, and search again
-                if start_search != -1:
-                    message_positions.append(start_search)
-                    start_search += 1
+            # Start reading the file up to humio_batch lines at a time
+            events_to_process = []
 
-            if len(message_positions) == 0:
-                log("Found %d message blocks in %s"% (len(message_positions), file), level="WARN")
-            else:
-                log("Found %d message blocks in %s"% (len(message_positions), file), level="INFO")
+            for event in ct_events_fh:
+                # Add the event to the list of events to send
+                events_to_process.append(json.loads(event))
 
-            # At this point we start processing the events and sending them to Humio
-            # in batches up to humio-batch events
-            for i, start_pos in enumerate(message_positions):
-                # Find the length for this block (i.e. start of next block less one byte)
-                try:
-                    length = (message_positions[i + 1]) - start_pos
-                except IndexError:
-                    # We're looking at the last block
-                    length = -1
+                # If we have enough events already, send them now and reset the list
+                if len(events_to_process) == args['humio_batch']:
+                    send_events_to_humio(args, events_to_process, file, http)
+                    events_to_process = []
 
-                # Load the message blocks and parse as JSON
-                cw_events_mm.seek(start_pos)
-                json_data = json.loads(cw_events_mm.read(length))
-
-                if args['debug']: log("Found %d events to process from pos [%d] length [%d] in %s"% (len(json_data['logEvents']), start_pos, length, file), level="DEBUG")
-
-                # The bare payload for Humio structured API request
-                payload = [ { "tags": {}, "events": [] } ]
-                payload[0]['tags']['logStreamPrefix'] =  '/'.join(json_data['logStream'].split('/')[0:2])
-                payload[0]['tags']['logGroup'] = json_data['logGroup']
-
-                had_error = False
-
-                # Process each event to build the payload
-                events_to_process = len(json_data['logEvents'])
-                for i, event in enumerate(json_data['logEvents']):
-                    event['file'] = file
-                    payload[0]['events'].append({ "timestamp": event['timestamp'],
-                                                  "attributes": event })
-
-                    if (len(payload[0]['events']) == args['humio_batch']) or (i == (events_to_process - 1)):
-                        ##### SEND HERE #####
-                        encoded_data = json.dumps(payload).encode('utf-8')
-                        r = http.request('POST', humio_url(args), body=encoded_data, headers=humio_headers(args))
-                        if r.status == 200:
-                            if args['debug']: log("Sent %d events to Humio successfully"% len(payload[0]['events']), level="DEBUG")
-                        else:
-                            log("Failed to send %d events to Humio, status=%d"% (len(payload[0]['events']), r.status), level="ERROR")
-                            had_error = True
-
-                        # Reset the payload
-                        payload = [ { "tags": {}, "events": [] } ]
-                        # We're only sending one group of events, so set the tags on the first set
-                        payload[0]['tags']['logStreamPrefix'] =  '/'.join(json_data['logStream'].split('/')[0:2])
-                        payload[0]['tags']['logGroup'] = json_data['logGroup']
-
-
-                if had_error:
-                    log("Error sending some events from file %s"% file_path, level="ERROR")
-                else:
-                    log("Sent %d events from file %s"% (len(json_data['logEvents']), file), level="INFO")
+            # Finally send any last events not already processed
+            if events_to_process:
+                send_events_to_humio(args, events_to_process, file, http)
 
         # We have processed a whole file, if tracking is requested we need to register it
         if args['track']:
@@ -174,6 +123,33 @@ def parse_and_send(args, file, http, client):
 
     if args['track']:
         conn.close()
+
+
+def send_events_to_humio(args, events, file, http):
+    """Takes groups of events and sends them in a single request to Humio. Does not
+    validate the number of events, so don't pass too many! (or none).
+
+    events: a list of JSON objects (each object a log event)
+    """
+
+    # Set the default tags, and we're going to only be sending one tag combination
+    payload = [ { "tags": {}, "events": [] } ]
+    payload[0]['tags']['provider'] =  "aws"
+    payload[0]['tags']['service'] = "cloudtrail"
+
+    # Process each event to build the payload
+    for event in events:
+        payload[0]['events'].append({ "timestamp": event['eventTime'],
+                                      "attributes": event })
+
+    encoded_data = json.dumps(payload).encode('utf-8')
+    r = http.request('POST', humio_url(args), body=encoded_data, headers=humio_headers(args))
+    if r.status == 200:
+        log("Sent %d events from file %s"% (len(events), file), level="INFO")
+    else:
+        log("Failed to send %d events to Humio, status=%d"% (len(payload[0]['events']), r.status), level="ERROR")
+
+    return
 
 
 

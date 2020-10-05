@@ -1,14 +1,19 @@
-# kinesis-s3-data-shipper
+# cloudtrail-to-humio
 
 This data shipper is designed to connect to an AWS S3 bucket, fetch the contents as found at the prefix, and ship the results to Humio. The script expects to find:
 
  - Files that are either uncompressed, or compressed (once or more) with gzip. No other compression formats are currently supported.
- - Files that have been read from cloudwatch and written to S3 using Kinesis (i.e. kinesis firehose destination from the cloudwatch log group, and S3 target for the firehose with, optionally, gzip compression enabled).
+ - Files that have been produced by CloudTrail and written to S3, with a single Records[] array per file.
+
+NOTE: Has an external dependency on `jq` and expects that to be found in PATH
+
 
  ## Usage
 
-    % python3 kinesis-to-humio.py --help
-    usage: kinesis-to-humio.py [-h] [--prefix PREFIX] [--aws-access-id AWS_ACCESS_ID] [--aws-access-secret AWS_ACCESS_SECRET] [--humio-batch HUMIO_BATCH] [--debug] [--tmpdir TMPDIR] [--track TRACK] bucket humio-host humio-token
+    % python3 cloudtrail-to-humio.py --help
+    usage: cloudtrail-to-humio.py [-h] [--prefix PREFIX] [--aws-access-id AWS_ACCESS_ID] [--aws-access-secret AWS_ACCESS_SECRET]
+                                  [--humio-batch HUMIO_BATCH] [--debug] [--tmpdir TMPDIR] [--track TRACK]
+                                  bucket humio-host humio-token
 
     This script is used to coordinate log ingest from S3 where those logs have arrived via an AWS kinesis stream.
 

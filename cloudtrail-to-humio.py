@@ -71,6 +71,9 @@ def parse_and_send(args, file, http, client):
     """For the file given we will extract the relevent events, parse them, and
     send them to Humio."""
 
+    # Using a global variable for event queue
+    global events_to_process
+
     # As we process the files, if tracking is requested, we need to register them as done
     if args['track']:
         conn = initalise_connection(args['track'])
@@ -100,24 +103,27 @@ def parse_and_send(args, file, http, client):
         # Moving the working file back in place
         shutil.move(file_path + ".working", file_path)
 
+        # Keep track of how many events we process from this file
+        events_added = 0
+
         # Open the new uncompressed and reformatted file for line-by-line processing
         with open(file_path) as ct_events_fh:
 
-            # Start reading the file up to humio_batch lines at a time
-            events_to_process = []
 
+            # Iterate over the lines in the file (should be NDJSON)
             for event in ct_events_fh:
                 # Add the event to the list of events to send
                 events_to_process.append(json.loads(event))
+                events_added += 1
 
                 # If we have enough events already, send them now and reset the list
                 if len(events_to_process) == args['humio_batch']:
-                    send_events_to_humio(args, events_to_process, file, http)
+                    send_events_to_humio(args, events_to_process, http)
                     events_to_process = []
 
-            # Finally send any last events not already processed
-            if events_to_process:
-                send_events_to_humio(args, events_to_process, file, http)
+        # We have queued (and maybe sent) all the events from this file
+        if args['debug']: log("Queued (and maybe already sent) %d items from file: %s"% (events_added, file), level="DEBUG")
+
 
         # We have processed a whole file, if tracking is requested we need to register it
         if args['track']:
@@ -127,7 +133,7 @@ def parse_and_send(args, file, http, client):
         conn.close()
 
 
-def send_events_to_humio(args, events, file, http):
+def send_events_to_humio(args, events, http):
     """Takes groups of events and sends them in a single request to Humio. Does not
     validate the number of events, so don't pass too many! (or none).
 
@@ -147,7 +153,7 @@ def send_events_to_humio(args, events, file, http):
     encoded_data = json.dumps(payload).encode('utf-8')
     r = http.request('POST', humio_url(args), body=encoded_data, headers=humio_headers(args))
     if r.status == 200:
-        log("Sent %d events from file %s"% (len(events), file), level="INFO")
+        log("Sent %d events"% len(events), level="INFO")
     else:
         log("Failed to send %d events to Humio, status=%d"% (len(payload[0]['events']), r.status), level="ERROR")
 
@@ -273,8 +279,17 @@ if __name__ == "__main__":
     # We're going to start sending some events so setup the http connection pool
     http = urllib3.PoolManager()
 
+    # Maintain a global state of events buffered for sending to Humio
+    global events_to_process
+    events_to_process = []
+
     # Process each file that we want to send to Humio
     for file in sorted(filesToProcess):
         parse_and_send(args, file, http, client)
+
+    # Finally send any last events not already processed
+    if events_to_process:
+        send_events_to_humio(args, events_to_process, http)
+
 
     sys.exit()

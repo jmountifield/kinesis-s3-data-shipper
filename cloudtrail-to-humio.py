@@ -163,7 +163,7 @@ def send_events_to_humio(args, events, http):
 
 
 
-def find_s3_subfolders(client, bucket, prefix="", CommonPrefixes=deque([]), ContinuationToken=False):
+def find_s3_subfolders(client, bucket, depth_hint=5, prefix="", CommonPrefixes=deque([]), ContinuationToken=False):
     """This function can be directed to an S3 bucket and will return the subdirectories found
     therein, as much as S3 has subdirectories."""
 
@@ -175,11 +175,13 @@ def find_s3_subfolders(client, bucket, prefix="", CommonPrefixes=deque([]), Cont
 
     # Add the newly found prefixes to our list to process, if there are any
     if 'CommonPrefixes' in object_list:
-        CommonPrefixes.extend(object_list['CommonPrefixes'])
+        for CommonPrefix in object_list['CommonPrefixes']:
+            if len(CommonPrefix['Prefix'].split('/')) <= depth_hint:
+                CommonPrefixes.append(CommonPrefix)
 
     # If we didn't get all the prefixes from this run, run again with the same options + ContinuationToken
     if object_list['IsTruncated']:
-        yield from find_s3_subfolders(client, bucket, prefix, CommonPrefixes, object_list['NextContinuationToken'])
+        yield from find_s3_subfolders(client, bucket, depth_hint, prefix, CommonPrefixes, object_list['NextContinuationToken'])
 
     # Throw up the next prefix to process, it's a valid prefix
     try:
@@ -192,7 +194,7 @@ def find_s3_subfolders(client, bucket, prefix="", CommonPrefixes=deque([]), Cont
     yield prefix
 
     # If we've still got common prefixes then we need to run again on the next prefixes
-    yield from find_s3_subfolders(client, bucket, prefix, CommonPrefixes)
+    yield from find_s3_subfolders(client, bucket, depth_hint, prefix, CommonPrefixes)
 
 
 
@@ -213,7 +215,10 @@ def find_shortest_common_prefixes(client, bucket, prefix=""):
 
     common_prefixes = []
     shortest_segments = 999999999
-    for subfolder in find_s3_subfolders(client, bucket, literal_prefix):
+
+    depth_hint = len(prefix.split('/')) + 1
+
+    for subfolder in find_s3_subfolders(client, bucket, depth_hint, literal_prefix):
         # Does the subfolder match?
         if fnmatch.fnmatch(subfolder, prefix):
             # Check to make sure we're not adding a deeper subfolder
@@ -350,6 +355,9 @@ if __name__ == "__main__":
 
     # Find the files to download and process
     for common_prefix in find_shortest_common_prefixes(client, args['bucket'], args['prefix']):
+
+        log("Collecting files for prefix: %s"% common_prefix)
+
         filesToProcess = find_files(args, client, common_prefix)
 
         if not filesToProcess:

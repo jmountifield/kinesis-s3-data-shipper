@@ -10,6 +10,7 @@ import urllib.parse
 import sqlite3
 import fnmatch
 import re
+from collections import deque
 import urllib3
 import boto3
 
@@ -133,6 +134,7 @@ def parse_and_send(args, file, http, client):
         conn.close()
 
 
+
 def send_events_to_humio(args, events, http):
     """Takes groups of events and sends them in a single request to Humio. Does not
     validate the number of events, so don't pass too many! (or none).
@@ -161,7 +163,77 @@ def send_events_to_humio(args, events, http):
 
 
 
-def find_files(args, client):
+def find_s3_subfolders(client, bucket, prefix="", CommonPrefixes=deque([]), ContinuationToken=False):
+    """This function can be directed to an S3 bucket and will return the subdirectories found
+    therein, as much as S3 has subdirectories."""
+
+    # Call to S3 to get more common prefixes
+    if ContinuationToken:
+        object_list = client.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/", ContinuationToken=ContinuationToken)
+    else:
+        object_list = client.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/")
+
+    # Add the newly found prefixes to our list to process, if there are any
+    if 'CommonPrefixes' in object_list:
+        CommonPrefixes.extend(object_list['CommonPrefixes'])
+
+    # If we didn't get all the prefixes from this run, run again with the same options + ContinuationToken
+    if object_list['IsTruncated']:
+        yield from find_s3_subfolders(client, bucket, prefix, CommonPrefixes, object_list['NextContinuationToken'])
+
+    # Throw up the next prefix to process, it's a valid prefix
+    try:
+        prefix = CommonPrefixes.popleft()['Prefix']
+    except IndexError:
+        # The list is empty so we're done
+        return
+
+    # This is where we actually return a prefix we've found
+    yield prefix
+
+    # If we've still got common prefixes then we need to run again on the next prefixes
+    yield from find_s3_subfolders(client, bucket, prefix, CommonPrefixes)
+
+
+
+def find_shortest_common_prefixes(client, bucket, prefix=""):
+    """Given a particular prefix pattern in S3, find the shortest directories
+    that match that pattern."""
+
+    # Shrten the prefix until we get to the last forward slash (everything
+    # after could be a filename match)
+    while not prefix.endswith('/') and len(prefix) > 0:
+        prefix = prefix[:-1]
+
+    # If no prefix is sent return a list with the empty string
+    if prefix == "":
+        return [""]
+    else:
+        literal_prefix = re.match("^([^\*\?]+)", prefix).group()
+
+    common_prefixes = []
+    shortest_segments = 999999999
+    for subfolder in find_s3_subfolders(client, bucket, literal_prefix):
+        # Does the subfolder match?
+        if fnmatch.fnmatch(subfolder, prefix):
+            # Check to make sure we're not adding a deeper subfolder
+            segment_length = len(subfolder.split('/'))
+            # If the new match is longer than the shortest ones we have already
+            # then we can return the list without adding it
+            if segment_length > shortest_segments:
+                return common_prefixes
+            else:
+                shortest_segments = segment_length
+            # Add the subfolder to the list, it matches and is the same length
+            # as any already matching subfolders
+            common_prefixes.append(subfolder)
+
+    # If we get here it means we probably found only one depth of subfolders
+    return common_prefixes
+
+
+
+def find_files(args, client, common_prefix):
     """ Get a list of all the objects to process"""
 
     # Lets see if we have a prefix with wildcards. We can't use them when we get the file list from
@@ -175,9 +247,9 @@ def find_files(args, client):
     continuation_token = 'UNSET'
     while continuation_token:
         if continuation_token == 'UNSET':
-            object_list = client.list_objects_v2(Bucket=args['bucket'],Prefix=prefix)
+            object_list = client.list_objects_v2(Bucket=args['bucket'], Prefix=common_prefix)
         else:
-            object_list = client.list_objects_v2(Bucket=args['bucket'], Prefix=prefix, ContinuationToken=continuation_token)
+            object_list = client.list_objects_v2(Bucket=args['bucket'], Prefix=common_prefix, ContinuationToken=continuation_token)
 
         if args['debug']: log("Found %d items from bucket list_objects_v2(), includes dirs."% object_list['KeyCount'], level="DEBUG")
 
@@ -269,13 +341,6 @@ if __name__ == "__main__":
     # Initialise the S3 client
     client = boto3.client('s3')
 
-    # Find the files to download and process
-    filesToProcess = find_files(args, client)
-
-    if not filesToProcess:
-        log("No Objects Found. If you think there should be then check yo' prefix.")
-        sys.exit()
-
     # We're going to start sending some events so setup the http connection pool
     http = urllib3.PoolManager()
 
@@ -283,13 +348,21 @@ if __name__ == "__main__":
     global events_to_process
     events_to_process = []
 
-    # Process each file that we want to send to Humio
-    for file in sorted(filesToProcess):
-        parse_and_send(args, file, http, client)
+    # Find the files to download and process
+    for common_prefix in find_shortest_common_prefixes(client, args['bucket'], args['prefix']):
+        filesToProcess = find_files(args, client, common_prefix)
 
-    # Finally send any last events not already processed
-    if events_to_process:
-        send_events_to_humio(args, events_to_process, http)
+        if not filesToProcess:
+            log("No Objects Found. If you think there should be then check yo' prefix.")
+            sys.exit()
+
+        # Process each file that we want to send to Humio
+        for file in sorted(filesToProcess):
+            parse_and_send(args, file, http, client)
+
+        # Finally send any last events not already processed
+        if events_to_process:
+            send_events_to_humio(args, events_to_process, http)
 
 
     sys.exit()

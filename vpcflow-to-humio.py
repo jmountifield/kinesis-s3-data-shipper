@@ -15,8 +15,10 @@ import urllib3
 import boto3
 
 
-def humio_url(args):
+def humio_url(args, unstructured=False):
     """Return the URL to Humio's structured ingest API"""
+    if unstructured:
+        return urllib.parse.urljoin(args['humio-host'], '/api/v1/ingest/humio-unstructured')
     return urllib.parse.urljoin(args['humio-host'], '/api/v1/ingest/humio-structured')
 
 
@@ -97,24 +99,16 @@ def parse_and_send(args, file, http, client):
             # Move the new file over the top of the original
             shutil.move(file_path + ".working", file_path)
 
-        # Rewite the cloudtrail file to convert the records[] array to NDJSON
-        with open(file_path + ".working", 'wb') as f_out:
-            subprocess.run(["jq -c \".Records | .[]\" %s"% file_path],
-                           shell=True, check=True, stdout=f_out)
-        # Moving the working file back in place
-        shutil.move(file_path + ".working", file_path)
-
         # Keep track of how many events we process from this file
         events_added = 0
 
         # Open the new uncompressed and reformatted file for line-by-line processing
-        with open(file_path) as ct_events_fh:
-
+        with open(file_path) as vpc_events_fh:
 
             # Iterate over the lines in the file (should be NDJSON)
-            for event in ct_events_fh:
+            for event in vpc_events_fh:
                 # Add the event to the list of events to send
-                events_to_process.append(json.loads(event))
+                events_to_process.append(event)
                 events_added += 1
 
                 # If we have enough events already, send them now and reset the list
@@ -143,22 +137,20 @@ def send_events_to_humio(args, events, http):
     """
 
     # Set the default tags, and we're going to only be sending one tag combination
-    payload = [ { "tags": {}, "events": [] } ]
-    payload[0]['tags']['provider'] =  "aws"
-    payload[0]['tags']['service'] = "cloudtrail"
+    payload = [ { "fields": {}, "messages": [] } ]
+    payload[0]['fields']['provider'] = "aws"
+    payload[0]['fields']['service'] = "vpcflow"
 
     # Process each event to build the payload
     for event in events:
-        payload[0]['events'].append({ "timestamp": event['eventTime'],
-                                      "attributes": event })
+        payload[0]['messages'].append(event)
 
     encoded_data = json.dumps(payload).encode('utf-8')
-    r = http.request('POST', humio_url(args), body=encoded_data, headers=humio_headers(args))
+    r = http.request('POST', humio_url(args, unstructured=True), body=encoded_data, headers=humio_headers(args))
     if r.status == 200:
         log("Sent %d events"% len(events), level="INFO")
     else:
         log("Failed to send %d events to Humio, status=%d"% (len(payload[0]['events']), r.status), level="ERROR")
-
     return
 
 

@@ -49,7 +49,7 @@ def initalise_connection(db_file):
         specified by the db_file """
     conn = None
     try:
-        conn = sqlite3.connect(db_file)
+        conn = sqlite3.connect(db_file, timeout=60)
         c = conn.cursor()
         c.execute("""CREATE TABLE IF NOT EXISTS files (
                          bucket text NOT NULL,

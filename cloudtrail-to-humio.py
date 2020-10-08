@@ -213,6 +213,10 @@ def find_shortest_common_prefixes(client, bucket, prefix=""):
     else:
         literal_prefix = re.match("^([^\*\?]+)", prefix).group()
 
+    # If the prefix is unchanged by the pattern then return it straight away
+    if prefix == literal_prefix:
+        return [prefix]
+
     common_prefixes = []
     shortest_segments = 999999999
 

@@ -99,7 +99,7 @@ def parse_and_send(args, file, http, client):
 
         # Rewite the cloudtrail file to convert the records[] array to NDJSON
         with open(file_path + ".working", 'wb') as f_out:
-            subprocess.run(["jq -c \".Records | .[]\" %s"% file_path],
+            subprocess.run(["jq -c \".configurationItems | .[]\" %s"% file_path],
                            shell=True, check=True, stdout=f_out)
         # Moving the working file back in place
         shutil.move(file_path + ".working", file_path)
@@ -145,7 +145,7 @@ def send_events_to_humio(args, events, http):
     # Set the default tags, and we're going to only be sending one tag combination
     payload = [ { "tags": {}, "events": [] } ]
     payload[0]['tags']['provider'] =  "aws"
-    payload[0]['tags']['service'] = "cloudtrail"
+    payload[0]['tags']['service'] = "config"
 
     # Process each event to build the payload
     for event in events:

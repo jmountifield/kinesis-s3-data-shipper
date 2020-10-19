@@ -143,6 +143,7 @@ def parse_and_send(args, file, http, client):
                 events_to_process = len(json_data['logEvents'])
                 for i, event in enumerate(json_data['logEvents']):
                     event['file'] = file
+                    event['logStream'] = json_data['logStream']
                     payload[0]['events'].append({ "timestamp": event['timestamp'],
                                                   "attributes": event })
 

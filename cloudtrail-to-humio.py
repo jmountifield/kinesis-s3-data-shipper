@@ -25,6 +25,7 @@ def humio_headers(args):
     """Humio structured api endpoint"""
     return {
         "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
         "Authorization": "Bearer " + args["humio-token"],
     }
 
@@ -158,8 +159,8 @@ def send_events_to_humio(args, events, http):
 
     # Set the default tags, and we're going to only be sending one tag combination
     payload = [{"tags": {}, "events": []}]
-    payload[0]["tags"]["provider"] = "aws"
-    payload[0]["tags"]["service"] = "cloudtrail"
+    # payload[0]["tags"]["provider"] = "aws"
+    # payload[0]["tags"]["service"] = "cloudtrail"
 
     # Process each event to build the payload
     for event in events:
@@ -168,8 +169,10 @@ def send_events_to_humio(args, events, http):
         )
 
     encoded_data = json.dumps(payload, sort_keys=True, indent=4).encode("utf-8")
+    encoded_compressed = gzip.compress(encoded_data, compresslevel=6)
+
     r = http.request(
-        "POST", humio_url(args), body=encoded_data, headers=humio_headers(args)
+        "POST", humio_url(args), body=encoded_compressed, headers=humio_headers(args)
     )
     if r.status == 200:
         log("Sent %d events" % len(events), level="INFO")

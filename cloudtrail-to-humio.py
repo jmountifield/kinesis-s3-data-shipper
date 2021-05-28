@@ -507,8 +507,8 @@ if __name__ == "__main__":
                         "Skipping invalid SQS message:\n\n%s" % newObjectEvent,
                         level="WARN",
                     )
-            # Remove the item from the queue now it's processed
-            message.delete()
+                # Remove the item from the queue now it's processed
+                message.delete()
 
         else:
             # Find the files to download and process as we're doing a scan

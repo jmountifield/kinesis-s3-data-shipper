@@ -11,11 +11,14 @@ NOTE: Has an external dependency on `jq` and expects that to be found in PATH
  ## Usage
 
     % python3 cloudtrail-to-humio.py --help
-    usage: cloudtrail-to-humio.py [-h] [--prefix PREFIX] [--aws-access-id AWS_ACCESS_ID] [--aws-access-secret AWS_ACCESS_SECRET]
-                                  [--humio-batch HUMIO_BATCH] [--debug] [--tmpdir TMPDIR] [--track TRACK]
+    usage: cloudtrail-to-humio.py [-h] [--sqs-queue SQS_QUEUE] [--prefix PREFIX]
+                                  [--aws-access-id AWS_ACCESS_ID] [--aws-access-secret AWS_ACCESS_SECRET]
+                                  [--humio-batch HUMIO_BATCH] [--sleep-time SLEEP_TIME] [--debug]
+                                  [--continuous] [--tmpdir TMPDIR] [--track TRACK]
                                   bucket humio-host humio-token
 
-    This script is used to coordinate log ingest from S3 where those logs have arrived via an AWS kinesis stream.
+    This script is used to coordinate log ingest from S3 where those logs have arrived via an AWS kinesis
+    stream.
 
     positional arguments:
       bucket                The S3 bucket from which to export. E.g "demo.humio.xyz"
@@ -24,6 +27,9 @@ NOTE: Has an external dependency on `jq` and expects that to be found in PATH
 
     optional arguments:
       -h, --help            show this help message and exit
+      --sqs-queue SQS_QUEUE
+                            SQS queue URL. When specified will read events from SQS queue to look for new
+                            changes.
       --prefix PREFIX       The S3 prefix from which to search. E.g "awslogs/2020/04/01/"
       --aws-access-id AWS_ACCESS_ID
                             The AWS access key ID (not implemented)
@@ -31,6 +37,9 @@ NOTE: Has an external dependency on `jq` and expects that to be found in PATH
                             The AWS access key secret (not implemented)
       --humio-batch HUMIO_BATCH
                             max event batch size for Humio API
+      --sleep-time SLEEP_TIME
+                            Number of seconds to sleep when running continuous
       --debug               We do the debug?
+      --continuous          Run continuously?
       --tmpdir TMPDIR       The temp directory where the work will be done
       --track TRACK         A path for a sqlite database for tracking files successfully processed

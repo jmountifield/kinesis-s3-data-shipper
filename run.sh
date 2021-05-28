@@ -4,7 +4,10 @@ export AWS_DEFAULT_REGION=eu-west-1
 
 # Note: client region above must match the sqs queue region below
 
-python3 cloudtrail-to-humio.py \
+THREADS=16
+
+seq $THREADS | parallel -n0u \
+	python3 cloudtrail-to-humio.py \
 	your-s3-bucket-name \
 	https://yuo.humio.server/ INGEST_TOKEN \
 	--debug \

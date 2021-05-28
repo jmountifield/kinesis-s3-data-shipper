@@ -117,7 +117,13 @@ def parse_and_send(args, file, http, client):
             # Iterate over the lines in the file (should be NDJSON)
             for event in ct_events_fh:
                 # Add the event to the list of events to send
-                events_to_process.append(json.loads(event))
+                json_event = json.loads(event)
+
+                # Add the details of the source of the event
+                json_event["s3_key"] = file
+                json_event["s3_bucket"] = args["bucket"]
+
+                events_to_process.append(json_event)
                 events_added += 1
 
                 # If we have enough events already, send them now and reset the list

@@ -108,6 +108,9 @@ def parse_and_send(args, file, http, client):
         # Moving the working file back in place
         shutil.move(file_path + ".working", file_path)
 
+        # TODO: at this point it is almost certianly more effecient to just POST
+        # the data directly to Humio as a compressed NDJSON against HEC raw
+
         # Keep track of how many events we process from this file
         events_added = 0
 

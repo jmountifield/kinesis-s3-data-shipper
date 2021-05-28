@@ -533,6 +533,7 @@ if __name__ == "__main__":
         # Flush the events before sleep
         if events_to_process:
             send_events_to_humio(args, events_to_process, http)
+            events_to_process = []
 
         if not args["continuous"]:
             break

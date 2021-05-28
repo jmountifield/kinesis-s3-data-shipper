@@ -486,7 +486,12 @@ if __name__ == "__main__":
     global events_to_process
     events_to_process = []
 
+    sleep_backoff = args["sleep_time"]
+
     while True:
+
+        did_work = False
+
         if args["sqs_queue"]:
             for message in get_new_events(args, sqs, maxEvents=10):
                 newObjectEvent = json.loads(message.body)
@@ -510,6 +515,8 @@ if __name__ == "__main__":
                 # Remove the item from the queue now it's processed
                 message.delete()
 
+                did_work = True
+
         else:
             # Find the files to download and process as we're doing a scan
             for common_prefix in find_shortest_common_prefixes(
@@ -524,11 +531,12 @@ if __name__ == "__main__":
                     log(
                         "No Objects Found. If you think there should be then check yo' prefix."
                     )
-                    sys.exit()
+                else:
+                    # Process each file that we want to send to Humio
+                    for file in sorted(filesToProcess):
+                        parse_and_send(args, file, http, client)
 
-                # Process each file that we want to send to Humio
-                for file in sorted(filesToProcess):
-                    parse_and_send(args, file, http, client)
+                    did_work = True
 
         # Flush the events before sleep
         if events_to_process:
@@ -538,7 +546,15 @@ if __name__ == "__main__":
         if not args["continuous"]:
             break
         else:
-            log("Sleeping for %d seconds" % args["sleep_time"])
-            time.sleep(args["sleep_time"])
+            # We're running in continuous mode
+            # if we did no work this time around double the sleep up to 5 mins
+            # if we did do work then reset sleep timer
+            if did_work:
+                sleep_backoff = args["sleep_time"]
+            else:
+                sleep_backoff = min(max(sleep_backoff, 1) * 2, 300)
+
+            log("Sleeping for %d seconds" % sleep_backoff)
+            time.sleep(sleep_backoff)
 
     sys.exit()

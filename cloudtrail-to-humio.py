@@ -13,6 +13,7 @@ import re
 from collections import deque
 import urllib3
 import boto3
+import time
 
 
 def humio_url(args):
@@ -127,8 +128,7 @@ def parse_and_send(args, file, http, client):
         # We have queued (and maybe sent) all the events from this file
         if args["debug"]:
             log(
-                "Queued (and maybe already sent) %d items from file: %s"
-                % (events_added, file),
+                "Queued %d items from file: %s" % (events_added, file),
                 level="DEBUG",
             )
 
@@ -158,7 +158,7 @@ def send_events_to_humio(args, events, http):
             {"timestamp": event["eventTime"], "attributes": event}
         )
 
-    encoded_data = json.dumps(payload).encode("utf-8")
+    encoded_data = json.dumps(payload, sort_keys=True, indent=4).encode("utf-8")
     r = http.request(
         "POST", humio_url(args), body=encoded_data, headers=humio_headers(args)
     )
@@ -364,6 +364,24 @@ def pp_args(args):
     print()
 
 
+def get_new_events(args, sqs, maxEvents=1, maxWaitSeconds=10, reserveSeconds=300):
+    queue = sqs.Queue(args["sqs_queue"])
+    return queue.receive_messages(
+        MessageAttributeNames=["All"],
+        WaitTimeSeconds=maxWaitSeconds,
+        VisibilityTimeout=reserveSeconds,
+        MaxNumberOfMessages=maxEvents,
+    )
+
+
+# def sqs_files(args, sqs, common_prefix):
+#     objects = []
+
+
+#     for key in objects:
+#         if not key.startswith(common_prefix):
+
+
 if __name__ == "__main__":
 
     # We only need to do the argparse if we're running interactivley
@@ -379,6 +397,12 @@ if __name__ == "__main__":
         type=str,
         action="store",
         help='The S3 bucket from which to export. E.g "demo.humio.xyz"',
+    )
+    parser.add_argument(
+        "--sqs-queue",
+        type=str,
+        action="store",
+        help="SQS queue URL. When specified will read events from SQS queue to look for new changes.",
     )
     parser.add_argument(
         "--prefix",
@@ -418,9 +442,17 @@ if __name__ == "__main__":
         default=5000,
         help="max event batch size for Humio API",
     )
+    parser.add_argument(
+        "--sleep-time",
+        type=int,
+        action="store",
+        default=5,
+        help="Number of seconds to sleep when running continuous",
+    )
 
     # Are we going to do the debug?
     parser.add_argument("--debug", action="store_true", help="We do the debug?")
+    parser.add_argument("--continuous", action="store_true", help="Run continuously?")
     parser.add_argument(
         "--tmpdir",
         type=is_suitable_tempdir,
@@ -444,6 +476,8 @@ if __name__ == "__main__":
 
     # Initialise the S3 client
     client = boto3.client("s3")
+    sqs_client = boto3.client("sqs")
+    sqs = boto3.resource("sqs")
 
     # We're going to start sending some events so setup the http connection pool
     http = urllib3.PoolManager()
@@ -452,25 +486,58 @@ if __name__ == "__main__":
     global events_to_process
     events_to_process = []
 
-    # Find the files to download and process
-    for common_prefix in find_shortest_common_prefixes(
-        client, args["bucket"], args["prefix"]
-    ):
+    while True:
+        if args["sqs_queue"]:
+            for message in get_new_events(args, sqs, maxEvents=10):
+                newObjectEvent = json.loads(message.body)
+                try:
+                    for record in newObjectEvent["Records"]:
+                        file = record["s3"]["object"]["key"]
+                        if file.startswith(args["prefix"]):
+                            parse_and_send(args, file, http, client)
+                        else:
+                            if args["debug"]:
+                                log(
+                                    "Skipping key %s as does not match prefix"
+                                    % args["prefix"],
+                                    level="DEBUG",
+                                )
+                except KeyError as e:
+                    log(
+                        "Skipping invalid SQS message:\n\n%s" % newObjectEvent,
+                        level="WARN",
+                    )
+            # Remove the item from the queue now it's processed
+            message.delete()
 
-        log("Collecting files for prefix: %s" % common_prefix)
+        else:
+            # Find the files to download and process as we're doing a scan
+            for common_prefix in find_shortest_common_prefixes(
+                client, args["bucket"], args["prefix"]
+            ):
 
-        filesToProcess = find_files(args, client, common_prefix)
+                log("Collecting files for prefix: %s" % common_prefix)
 
-        if not filesToProcess:
-            log("No Objects Found. If you think there should be then check yo' prefix.")
-            sys.exit()
+                filesToProcess = find_files(args, client, common_prefix)
 
-        # Process each file that we want to send to Humio
-        for file in sorted(filesToProcess):
-            parse_and_send(args, file, http, client)
+                if not filesToProcess:
+                    log(
+                        "No Objects Found. If you think there should be then check yo' prefix."
+                    )
+                    sys.exit()
 
-        # Finally send any last events not already processed
+                # Process each file that we want to send to Humio
+                for file in sorted(filesToProcess):
+                    parse_and_send(args, file, http, client)
+
+        # Flush the events before sleep
         if events_to_process:
             send_events_to_humio(args, events_to_process, http)
+
+        if not args["continuous"]:
+            break
+        else:
+            log("Sleeping for %d seconds" % args["sleep_time"])
+            time.sleep(args["sleep_time"])
 
     sys.exit()

@@ -524,10 +524,16 @@ if __name__ == "__main__":
                     for record in newObjectEvent["Records"]:
                         file = record["s3"]["object"]["key"]
 
+                        # Filter out the paths that don't match the common prefix
                         should_process = False
                         for prefix in common_prefixs:
                             if file.startswith(prefix):
                                 should_process = True
+
+                        # TODO: this should be optional, for now filter out the files that don't
+                        # contain only CloudTrail data (i.e. have a path not */CloudTrail/*)
+                        if "/CloudTrail/" not in file:
+                            should_process = False
 
                         if should_process:
                             parse_and_send(args, file, http, client)

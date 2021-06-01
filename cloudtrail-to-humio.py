@@ -99,13 +99,21 @@ def parse_and_send(args, file, http, client):
             shutil.move(file_path + ".working", file_path)
 
         # Rewite the cloudtrail file to convert the records[] array to NDJSON
-        with open(file_path + ".working", "wb") as f_out:
-            subprocess.run(
-                ['jq -c ".Records | .[]" %s' % file_path],
-                shell=True,
-                check=True,
-                stdout=f_out,
-            )
+        try:
+            with open(file_path + ".working", "wb") as f_out:
+                subprocess.run(
+                    ['jq -c ".Records | .[]" %s' % file_path],
+                    shell=True,
+                    check=True,
+                    stdout=f_out,
+                )
+        except subprocess.CalledProcessError as e:
+            # Probably means we have an empty JQ file
+            log("Failed to run jq, probably an empty input file %s" % e, level="ERROR")
+
+            # Skip this iteration of the loop as there's not going to be a vaild file to process
+            return False
+
         # Moving the working file back in place
         shutil.move(file_path + ".working", file_path)
 

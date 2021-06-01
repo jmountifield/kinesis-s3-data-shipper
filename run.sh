@@ -10,6 +10,7 @@ seq $THREADS | parallel -n0u \
 	python3 cloudtrail-to-humio.py \
 	your-s3-bucket-name \
 	https://yuo.humio.server/ INGEST_TOKEN \
+	--prefix "AWSLogs/*/CloudTrail/*" \
 	--debug \
 	--sqs-queue "https://sqs.eu-west-1.amazonaws.com/9876547876/cloudtrail-sqs-queue-name" \
 	--continuous \

@@ -508,6 +508,11 @@ if __name__ == "__main__":
 
     sleep_backoff = args["sleep_time"]
 
+    # Find the common prefixes
+    common_prefixs = find_shortest_common_prefixes(
+        client, args["bucket"], args["prefix"]
+    )
+
     while True:
 
         did_work = False
@@ -518,7 +523,13 @@ if __name__ == "__main__":
                 try:
                     for record in newObjectEvent["Records"]:
                         file = record["s3"]["object"]["key"]
-                        if file.startswith(args["prefix"]):
+
+                        should_process = False
+                        for prefix in common_prefixs:
+                            if file.startswith(prefix):
+                                should_process = True
+
+                        if should_process:
                             parse_and_send(args, file, http, client)
                         else:
                             if args["debug"]:
@@ -539,9 +550,7 @@ if __name__ == "__main__":
 
         else:
             # Find the files to download and process as we're doing a scan
-            for common_prefix in find_shortest_common_prefixes(
-                client, args["bucket"], args["prefix"]
-            ):
+            for common_prefix in common_prefixs:
 
                 log("Collecting files for prefix: %s" % common_prefix)
 
